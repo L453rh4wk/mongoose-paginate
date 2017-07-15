@@ -60,7 +60,7 @@ function paginate(query, options, callback) {
             });
         }
 
-        promises.docs = cache >= 0 ? query.cache(cache).exec() : query.exec();
+        promises.docs = cache > 0 ? query.cache(cache).exec() : query.exec();
 
         if (lean && leanWithId) {
             promises.docs = promises.docs.then(function(docs) {
