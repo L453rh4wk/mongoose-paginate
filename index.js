@@ -11,7 +11,7 @@ const mongoose = require('mongoose');
  * @param {Array|Object|String} [options.populate]
  * @param {Boolean} [options.lean=false]
  * @param {Boolean} [options.leanWithId=true]
- * @param {Number} [options.cache=0]
+ * @param {Object} [options.cache= { ttl, key }]
  * @param {Object} [options.hint = { $natural: 1 }]
  * @param {Number} [options.offset=0] - Use offset or page to set skip position
  * @param {Number} [options.page=1]
@@ -27,7 +27,7 @@ function paginate(query, options, callback) {
   let sort = options.sort;
   let populate = options.populate;
   let lean = options.lean || false;
-  let cache = options.cache || 0;
+  let cache = options.cache || { ttl: 0 };
   let hint = options.hint || { $natural: 1 }
   let leanWithId = options.hasOwnProperty('leanWithId') ? options.leanWithId : true;
   let limit = options.hasOwnProperty('limit') ? options.limit : 10;
@@ -53,10 +53,10 @@ function paginate(query, options, callback) {
       .skip(skip)
       .limit(limit)
 
-      if(cache > 0)
-        docsQuery.cache(cache)
-      else if (cache < 0)
-        docsQuery.cache(0)
+      if(cache.ttl > 0)
+        docsQuery.cache(cache.ttl, cache.key)
+      else if (cache.ttl < 0)
+        docsQuery.cache(0, cache.key)
 
       docsQuery.lean(lean);
 
