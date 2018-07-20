@@ -1,5 +1,7 @@
 'use strict';
 
+const mongoose = require('mongoose');
+
 /**
  * @package mongoose-paginate
  * @param {Object} [query={}]
@@ -9,6 +11,8 @@
  * @param {Array|Object|String} [options.populate]
  * @param {Boolean} [options.lean=false]
  * @param {Boolean} [options.leanWithId=true]
+ * @param {Object} [options.cache= { ttl, key }]
+ * @param {Object} [options.hint = { $natural: 1 }]
  * @param {Number} [options.offset=0] - Use offset or page to set skip position
  * @param {Number} [options.page=1]
  * @param {Number} [options.limit=10]
@@ -23,9 +27,12 @@ function paginate(query, options, callback) {
   let sort = options.sort;
   let populate = options.populate;
   let lean = options.lean || false;
-  let leanWithId = options.leanWithId ? options.leanWithId : true;
-  let limit = options.limit ? options.limit : 10;
-  let page, offset, skip, promises;
+  let cache = options.cache || { ttl: 0 };
+  let hint = options.hint || { $natural: 1 }
+  let leanWithId = options.hasOwnProperty('leanWithId') ? options.leanWithId : true;
+  let limit = options.hasOwnProperty('limit') ? options.limit : 10;
+  let page, offset, skip, docsQuery, promises;
+
   if (options.offset) {
     offset = options.offset;
     skip = offset;
@@ -37,57 +44,75 @@ function paginate(query, options, callback) {
     offset = 0;
     skip = offset;
   }
-  if (limit) {
-    let docsQuery = this.find(query)
+
+  if (limit > 0) {
+    docsQuery = this.find(query)
       .select(select)
+      .hint(hint)
       .sort(sort)
       .skip(skip)
       .limit(limit)
-      .lean(lean);
+
+      if(cache.ttl > 0)
+        docsQuery.cache(cache.ttl, cache.key)
+      else if (cache.ttl < 0)
+        docsQuery.cache(0, cache.key)
+
+      docsQuery.lean(lean);
+
     if (populate) {
-      [].concat(populate).forEach((item) => {
-        docsQuery.populate(item);
-      });
-    }
-    promises = {
-      docs: docsQuery.exec(),
-      count: this.count(query).exec()
-    };
-    if (lean && leanWithId) {
-      promises.docs = promises.docs.then((docs) => {
-        docs.forEach((doc) => {
-          doc.id = String(doc._id);
-        });
-        return docs;
-      });
+      [].concat(populate).forEach((item) => docsQuery.populate(item));
     }
   }
-  promises = Object.keys(promises).map((x) => promises[x]);
-  return Promise.all(promises).then((data) => {
-    let result = {
-      docs: data.docs,
-      total: data.count,
-      limit: limit
-    };
-    if (offset !== undefined) {
-      result.offset = offset;
-    }
-    if (page !== undefined) {
-      result.page = page;
-      result.pages = Math.ceil(data.count / limit) || 1;
-    }
-    if (typeof callback === 'function') {
-      return callback(null, result);
-    }
-    let promise = new Promise();
-    promise.resolve(result);
-    return promise;
+
+  promises = [
+    docsQuery ? docsQuery.exec() : Promise.resolve({}),
+    this.count(query).exec()
+  ];
+
+  let promise = new Promise((resolve, reject) => {
+    Promise.all(promises).then((data) => {
+      let docs = (limit > 0) ? data[0] : [];
+      let count = data[1];
+      let result = {
+        docs: docs,
+        total: count,
+        limit: limit
+      };
+      if (lean && leanWithId) {
+        result.docs = result.docs.map((doc) => {
+          doc.id = String(doc._id);
+          return doc;
+        });
+      }
+      if (offset !== undefined) {
+        result.offset = offset;
+      }
+      if (page !== undefined) {
+        result.page = page;
+        result.pages = Math.ceil(result.total / limit) || 1;
+      }
+      if (typeof callback === 'function') {
+        return callback(null, result);
+      }
+      resolve(result);
+    }, (error) => {
+      if (typeof callback === 'function') {
+        return callback(error, null);
+      }
+      reject(error);
+    });
   });
+
+  return promise;
 }
 
 /**
  * @param {Schema} schema
+ * use native ES6 promises verus mpromise
  */
+
+mongoose.Promise = global.Promise;
 
 module.exports = function(schema) {
   schema.statics.paginate = paginate;
